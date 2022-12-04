@@ -99,7 +99,7 @@ app.post("/reset",async (req,res)=>{
     try{
         let agent_ip = req.ip.split(":")[3]
         if(req.body.code === ACTIVE_CODE){
-            if(await agent.resetAgent()){
+            if(await agent.resetAllAgent()){
                 debug(`[Reset Backend] Reset success`)
                 reset_status.status = "success"
             }
