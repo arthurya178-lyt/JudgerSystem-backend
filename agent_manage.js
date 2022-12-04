@@ -101,6 +101,7 @@ module.exports = {
         }
         return rtStatus
     },
+    // calling reset function for all agent in the list
     resetAllAgent :async function (){
         let reset_status = true
         try{
@@ -139,7 +140,6 @@ module.exports = {
     },
     occupyIdleAgent:async function (){
         while (true){
-            debug("occupyIdleAgent reRUN")
             if(total_processing_task < total_task){
                 for( let server = 0; server < server_list.length;server++ ){
                     if(server_list[server].processing_task < server_list[server].max_task){

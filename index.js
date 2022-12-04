@@ -85,9 +85,6 @@ app.post('/test',async (req,res)=>{
     const request = {
         lang:1
     }
-
-
-
     await agent.postTask(request)
 
     res.json({done:true})
@@ -123,8 +120,15 @@ app.post('/list/agent',async (req,res)=>{
 
 app.post('/verify',async (req,res)=>{
     let response = {verify:false}
-    if(agent.agentTokenFind(req.body.token) !== -1)
-        response.verify = true
+    try{
+        if(agent.agentTokenFind(req.body.token) !== -1){
+
+            response.verify = true
+        }
+    }
+    catch (e){
+        errLog('/verify',e.toString())
+    }
     res.json(response)
 })
 
