@@ -10,8 +10,24 @@ app.use(express.urlencoded({extended:false}))
 
 
 const agent = require('./agent_manage.js')
-const {BACKEND_PORT, ACTIVE_CODE} = require("./ENV.agrs");
+const {BACKEND_PORT, ACTIVE_CODE, ACCESS_CODE} = require("./ENV.agrs");
 const {debug, errLog} = require("./utilities");
+
+// 檢查連線是否有金鑰
+const connAccess = function (req,res,next){
+    if(req.headers.access_code === ACCESS_CODE ){
+        next()
+    }
+    else{
+        res.json({
+            status: "failed",
+            success: false,
+            describe: "No Authorize request, check your access code ! access_code should put in headers "
+        })
+    }
+}
+
+
 
 // 新增 Agent 到叢集中
 app.post('/activate', async (req, res) =>
@@ -27,7 +43,7 @@ app.post('/activate', async (req, res) =>
             response.token = token
         }
         else{
-            debug(`[Active Agent] Active failed | recive code: ${req.body.active_code} | ip ${agent_ip} `)
+            debug(`[Active Agent] Active failed | receive code: ${req.body.active_code} | ip ${agent_ip} `)
         }
     }
     catch (e){
@@ -37,7 +53,7 @@ app.post('/activate', async (req, res) =>
     res.json(response)
 })
 
-app.post('/judge',async (req,res)=>{
+app.post('/judge',connAccess,async (req,res)=>{
     const judge_response = {success:false}
     try{
         // Validation request parameter
@@ -79,6 +95,45 @@ app.post('/judge',async (req,res)=>{
     res.json(judge_response)
 })
 
+app.post('/compile',async (req,res)=>{
+    const compile_response = {success:false}
+    try{
+        // Validation request parameter
+        if(!req.body.lang) throw "require lang parameter"
+        if(!req.body.source) throw "require source parameter"
+        if(!Array.isArray(req.body.source) ) throw "code parameter should Array type"
+
+        const params = {
+            base64:req.query.base64,
+            base64_in:req.query.base64_in,
+            base64_out:req.query.base64_out,
+            input_text:req.query.input_text
+        }
+
+        const code_data = {
+            lang: req.body.lang,
+            input: req.body.input,
+            source: req.body.source,
+        }
+
+        // console.log(code_data)
+        const postResult = await agent.postExecute(code_data,params)
+        if(postResult.success){
+            compile_response.success = true
+            compile_response.info = postResult.info
+        }
+        else{
+            compile_response.describe = postResult.describe
+        }
+    }
+    catch (e){
+        errLog("/compile",e.toString())
+        compile_response.describe = e.toString()
+    }
+
+    res.json(compile_response)
+})
+
 
 
 app.post('/test',async (req,res)=>{
@@ -96,7 +151,7 @@ app.post("/reset",async (req,res)=>{
     try{
         let agent_ip = req.ip.split(":")[3]
         if(req.body.code === ACTIVE_CODE){
-            if(await agent.resetAllAgent()){
+            if(agent.resetAllAgent()){
                 debug(`[Reset Backend] Reset success`)
                 reset_status.status = "success"
             }
@@ -105,7 +160,7 @@ app.post("/reset",async (req,res)=>{
             }
         }
         else{
-            debug(`[Reset Backend] reset failed | recive code: ${req.body.code} | ip ${agent_ip} `)
+            debug(`[Reset Backend] reset failed | receive code: ${req.body.code} | ip ${agent_ip} `)
         }
     }
     catch (e){
@@ -121,8 +176,9 @@ app.post('/list/agent',async (req,res)=>{
 app.post('/verify',async (req,res)=>{
     let response = {verify:false}
     try{
-        if(agent.agentTokenFind(req.body.token) !== -1){
-
+        let agent_ip = req.ip.split(":")[3]
+        if(agent.getAgent(agent_ip).token === req.body.token){
+            agent.renewAgentLife(agent_ip)
             response.verify = true
         }
     }

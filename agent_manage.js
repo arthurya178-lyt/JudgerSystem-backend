@@ -1,117 +1,159 @@
 const {sleep, debug, errLog, bugShow} = require("./utilities");
 const axios = require('axios')
 const qs = require('qs')
-const {AGENT_PORT, ACTIVE_CODE, AXIOS_TIMEOUT} = require("./ENV.agrs");
+const {AGENT_PORT, ACTIVE_CODE, AXIOS_TIMEOUT, AGENT_DEAD_TIME} = require("./ENV.agrs");
 const {response} = require("express");
 const {post} = require("axios");
+const dayjs = require("dayjs");
 
-let server_list = []
-let total_task = 0
-let total_processing_task = 0
+let agent_list = {}
+
+let task_volume = 0
+let in_progress_task = 0
 
 axios.defaults.timeout = AXIOS_TIMEOUT * 1000
 
 module.exports = {
-    addAgent : function (agent_ip,token){
-        const agent_found = this.agentIpFind(agent_ip)
-        debug(`[Add agent] agent found: ${agent_found}`)
-        if(agent_found === -1){
-            server_list.push({
-                agent_ip:agent_ip,
+    addAgent : function (agent_ip,token,allow_task = 10){
+        debug(`[Add agent] agent found: ${(agent_list[agent_ip])?"True":"False"}`)
+        const nowUTCTime = new Date().getTime()
+        if(!agent_list[agent_ip]){
+            agent_list[agent_ip] = {
                 token : token,
-                max_task: 1,
-                processing_task:0
-            })
-            total_task += 1
+                max_task: allow_task,
+                processing_task:0,
+                alive_time:nowUTCTime
+            }
+            task_volume += allow_task
         }else {
-            server_list[agent_found].token = token
+            agent_list[agent_ip].token = token
+            agent_list[agent_ip].alive_time = nowUTCTime
         }
     },
-    removeAgent:function (token){
-        const agent_find = this.agentTokenFind(token)
-        if(agent_find > -1){
-            total_task -= server_list[agent_find].max_task
-            total_processing_task -= server_list[agent_find].processing_task
-            server_list.splice(agent_find,1)
+    removeAgent:function (ip){
+        if(agent_list[ip]){
+            task_volume -= agent_list[ip].max_task
+            in_progress_task -= agent_list[ip].processing_task
+            agent_list[ip] = null
             return true
         }
         return false
     },
-    resetAgent:async function(token){
-        const agent_find = this.agentTokenFind(token)
-        if(agent_find > -1){
-            debug(`[Reset Agent] Reset Calling found | ip: ${server_list[agent_find].agent_ip}`)
+    addTask:function(ip,quantity = 1){
+        if(agent_list[ip] && agent_list[ip].max_task >= agent_list[ip].processing_task + quantity){
+            agent_list[ip].processing_task += quantity
+            in_progress_task += quantity
+            debug(`[add Task] Add agent "${ip}" processing_task: ${quantity}`)
+            return true
+        }
+        else{
+            debug(`[add Task] Agent "${ip}" has no enough space to add processing_task: ${quantity}`)
+        }
+        return false
+    },
+    releaseTask:function (ip,quantity = 1){
+        if(agent_list[ip] && 0 <= agent_list[ip].processing_task - quantity){
+            agent_list[ip].processing_task -= quantity
+            in_progress_task -= quantity
+            debug(`[release Task] Release agent "${ip}" processing_task: ${quantity}`)
+            return true
+        }
+        else{
+            debug(`[release Task] Agent "${ip}" has no enough space to release processing_task: ${quantity}`)
+        }
+        return false
+    },
+    lowLoadAgent:function (task_quantity = 1){
+        let lowLoadIP = null
+        let loading = -1
+        let ipList = Object.keys(agent_list)
+        ipList.map(ip=>{
+            if(agent_list[ip].processing_task + task_quantity <= agent_list[ip].max_task &&
+                (loading == -1 || agent_list[ip].processing_task < loading)){
+                lowLoadIP = ip
+                loading = agent_list[ip].processing_task
+            }
+        })
+        debug(`[low Load Agent] Found the lowest load Agent "${lowLoadIP}" loading: ${loading}`)
+        return lowLoadIP
+    },
+    getAgent:function (ip){
+      return agent_list[ip]
+    },
+    checkAgentLife:function (ip){
+        let serverState = false
+        if(agent_list[ip]){
+            let deadTime = dayjs(new Date(agent_list[ip].alive_time)).add(AGENT_DEAD_TIME,"s")
+            let nowTime = dayjs(new Date())
+            serverState = deadTime.isAfter(nowTime)
+            debug(`[check Agent Life] Agent ${ip} status is ${serverState?"Alive":"Dead"}`)
+        }
+        else{
+            debug(`[check Agent Life] Cannot use ${ip} find the agent in agent_list`)
+        }
+        return serverState
+    },
+    renewAgentLife:function (ip){
+        let renewState = false
+        if(agent_list[ip]){
+            const nowUTCTime = new Date().getTime()
+            agent_list[ip].alive_time = nowUTCTime
+            debug(`[valid Agent Server] Agent ${ip} life_time renew `)
+            renewState = true
+        }
+        else{
+            debug(`[valid Agent Server] Cannot use ${ip} find the agent in agent_list`)
+        }
+        return renewState
+    },
+    validationAgent:async function (ip){
+        let agentLife = this.checkAgentLife(ip)
+        if(!agentLife){
+            debug(`[valid Agent Server] Agent ${ip} is dead, try to reset agent`)
+            let reset_status = await this.resetAgent(ip)
+            // because agent reset setup is depending on internet speed, so here need a timer to pause function
+            await sleep(3)
+            if(reset_status){
+                debug(`[valid Agent Server] Agent ${ip} reset successfully`)
+                agentLife = this.checkAgentLife(ip)
+            }
+        }else{
+            debug(`[valid Agent Server] Agent ${ip} is valid`)
+        }
+        return agentLife
+    },
+    resetAgent:async function(ip){
+        let resetStatus = false
+        if(agent_list[ip]){
+            debug(`[Reset Agent] Reset Calling found | ip: ${ip}`)
             const config2 = {
                 method: 'post',
-                baseURL: `http://${server_list[agent_find].agent_ip}:${AGENT_PORT}`,
+                baseURL: `http://${ip}:${AGENT_PORT}`,
                 url: "/reset",
                 data: qs.stringify({code:ACTIVE_CODE}),
-                timeout:1000,
+                timeout:3000,
             }
             await axios(config2).then(response=>{
                 if(response.data.status == "accept"){
-                    debug(`[Reset Agent] Reset Calling successful  | ip: ${server_list[agent_find].agent_ip}`)
+                    debug(`[Reset Agent] Reset Calling successful  | ip: ${ip}`)
+                    resetStatus = true
                 }
             }).catch(err=>{
                 errLog('reset Agent',err.toString())
-                this.removeAgent(server_list[agent_find].token)
+                this.removeAgent(ip)
             })
-            return true
         }
-        return false
+        return resetStatus
 
-    },
-    checkAgentIdle:async function(agent_ip,token){
-        let rtStatus = false
-        try{
-            const config = {
-                headers:{
-                    token:token,
-                },
-                method: 'post',
-                baseURL: `http://${agent_ip}:${AGENT_PORT}`,
-                url: "/connection",
-                timeout:5000,
-            }
-            await axios(config).then(async response=>{
-                if(response.data.status === "idle"){
-                    rtStatus = true
-                }
-                else if(response.data.status === "busy"){
-                    debug(`[Check Agent Idle] Agent Busy | ip ${agent_ip}`)
-                    rtStatus = false
-                }
-                else if(response.data.status === "failed"){
-                    debug(`[Check Agent Idle] Agent connect failed, system try to refresh this agent | ip ${agent_ip}`)
-                    await this.resetAgent(token)
-                    rtStatus = false
-                }
-                else{
-                    errLog(`Check Agent Idle`,'Unexpected Error!!',response.data)
-                    rtStatus = false
-                }
-            }).catch(async err=>{
-                errLog(`Check Agent Idle`,`Connect to agent ip: ${agent_ip} failed!!`,err.toString())
-                await this.resetAgent(token)
-                rtStatus = false
-            })
-        }
-        catch (e){
-            errLog(`[Task occupy]`,`Unexpected Error`,e.toString())
-        }
-        return rtStatus
     },
     // calling reset function for all agent in the list
     resetAllAgent :async function (){
         let reset_status = true
         try{
-            let agentIp = []
-            server_list.map(mapServer=>{
-                agentIp.push(mapServer.token)
-            })
+            let agentIp = Object.keys(agent_list)
             debug("[resetAllAgent] System reset all agent data")
-            await Promise.all(agentIp.map(async mapAgentToken=>{
-                await this.resetAgent(mapAgentToken)
+            await Promise.all(agentIp.map(async mapAgentIp=>{
+                await this.resetAgent(mapAgentIp)
             }))
         }
         catch (e){
@@ -120,77 +162,55 @@ module.exports = {
         }
         return reset_status
     },
-    agentIpFind : function (agent_ip){
-
-        for(let i = 0 ; i < server_list.length; i++){
-            if(server_list[i].agent_ip === agent_ip)
-                return i
-        }
-        return -1
-    },
-    agentTokenFind : function (token) {
-        for(let i = 0 ; i < server_list.length; i++){
-            if(server_list[i].token === token)
-                return i
-        }
-        return -1
-    },
     list:function (){
-        return {max_task_amount:total_task,processing_task_amount:total_processing_task,agent_amount : server_list.length,list : server_list}
+        return {max_task_amount:task_volume,processing_task_amount:in_progress_task,agent_amount : agent_list.length,list : agent_list}
     },
-    occupyIdleAgent:async function (){
+    occupyIdleAgent:async function (task_quantity = 1){
         while (true){
-            if(total_processing_task < total_task){
-                for( let server = 0; server < server_list.length;server++ ){
-                    if(server_list[server].processing_task < server_list[server].max_task){
-                        if(await this.checkAgentIdle(server_list[server].agent_ip,server_list[server].token)){
-                            server_list[server].processing_task++
-                            total_processing_task += 1
-                            debug(`[Task occupy] Token: ${server_list[server].token} | remaining task: ${total_processing_task} `)
-                            return {task_number:total_processing_task ,token:server_list[server].token, id:server}
-                        }
-                        else {
-                            errLog(`Task occupy`,`Agent Idle Error, may somthing wrong!`)
-                        }
-                    }
+            let serverIp = this.lowLoadAgent(task_quantity)
+
+            if(serverIp){
+                let agent_valid = await this.validationAgent(serverIp)
+                if(agent_valid){
+                    debug(`[Task occupy] Find agent available to use | ip: ${serverIp} !!`)
+                    this.addTask(serverIp,task_quantity)
+                    return serverIp
+                }else{
+                    debug(`[Task occupy] Agent ${serverIp} validation failed !!`)
                 }
-                errLog(`[Task occupy]`,`No Aviliable Agent to used , server will try to find again !!`)
-                await sleep(3)
             }
             else{
-                debug("[Task occupy] No agent aviliable to use !!")
-                await sleep(Math.random()*3)
+                debug("[Task occupy] No agent available to use !!")
+                await sleep(Math.random()*5)
             }
         }
     },
-    releaseAgent: function (token){
-        let releaseId = this.agentTokenFind(token)
-        if(releaseId > -1){
-            if(server_list[releaseId].processing_task >= 0){
-                server_list[releaseId].processing_task -= 1
-                total_processing_task -= 1
-                debug(`[Task release] Token: ${token} | remaining task: ${total_processing_task} `)
-                return true
-            }
-            else{
-                debug('[Task release] no enough space to release')
-            }
-        }else{
-            debug('[Task release] release target not exist')
-        }
-        return false
-    },
+    /*
+    #post_data
+        @lang : the coding language used to compile program
+        @input : (array)input source code
+            @file_name (String)
+            @file_data (String)
+        @answer : (array)correct answer source code
+            @file_name (String)
+            @file_data (String)
+        @student : (array)student judging answer source code
+            @file_name (String)
+            @file_data (String)
+    #post_params
+        @(base64,base64_in,base64_out) control the agent which decode type to used
+     */
     postTask:async function (post_data,post_params){
         let post_status = {success:false}
         try{
-            let idleAgent = await this.occupyIdleAgent()
+            let agentIp = await this.occupyIdleAgent()
 
             const config = {
                 headers:{
-                    token:server_list[idleAgent.id].token,
+                    token:agent_list[agentIp].token,
                 },
                 method: 'post',
-                baseURL: `http://${server_list[idleAgent.id].agent_ip}:${AGENT_PORT}`,
+                baseURL: `http://${agentIp}:${AGENT_PORT}`,
                 url: "/judge",
                 data : post_data,
                 params : post_params
@@ -203,15 +223,59 @@ module.exports = {
                 else{
                     post_status.describe = response.data.describe
                 }
+            }).catch(err=>{
+                errLog("postTask Axios",err.toString(),`statusCode: ${err.response.status}`,err.response.data)
             })
             // await sleep(15)
-            this.releaseAgent(idleAgent.token)
+            this.releaseTask(agentIp)
         }
         catch (e){
             errLog("postTask",e.toString())
         }
         return post_status
     },
+    /*
+    #post_data
+        @input : require input string data
+        @execute_data: (Array) require type json
+            @file_name (String)
+            @file_data (String)
+    #post_params
+        @(base64,base64_in,base64_out) control the agent which decode type to used
+     */
+    postExecute:async function (post_data,post_params){
+        let post_status = {success:false}
+        try{
+            let agentIp = await this.occupyIdleAgent()
 
+            const config = {
+                headers:{
+                    token:agent_list[agentIp].token,
+                },
+                method: 'post',
+                baseURL: `http://${agentIp}:${AGENT_PORT}`,
+                url: "/execute",
+                data : post_data,
+                params : post_params
+            }
+            await axios(config).then(response=>{
+                if(response.data.success){
+                    post_status.info = response.data.info
+                    post_status.success = true
+                }
+                else{
+                    post_status.describe = response.data.describe
+                }
+            }).catch(err=>{
+                errLog("postCompile Axios",err.toString(),`statusCode: ${err.response.status}`,err.response.data)
+            })
+            // await sleep(15)
+            this.releaseTask(agentIp)
+        }
+        catch (e){
+            errLog("postCompile",e.toString())
+        }
+        return post_status
+    },
 
 }

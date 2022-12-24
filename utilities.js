@@ -13,7 +13,7 @@ module.exports = {
     },
     sleep: function (second){
         if(DEBUG){
-            console.log(chalk.blue(`[UTIL-SLEEP] programe stop ${second}'s`))
+            console.log(chalk.blue(`[UTIL-SLEEP] program stop ${second}'s`))
         }
         return new Promise(resolve => setTimeout(() =>resolve(), second*1000));
     },
