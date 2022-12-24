@@ -202,8 +202,9 @@ module.exports = {
      */
     postTask:async function (post_data,post_params){
         let post_status = {success:false}
+        let agentIp = null
         try{
-            let agentIp = await this.occupyIdleAgent()
+            agentIp = await this.occupyIdleAgent()
 
             const config = {
                 headers:{
@@ -226,7 +227,7 @@ module.exports = {
             }).catch(err=>{
                 errLog("postTask Axios",err.toString(),`statusCode: ${err.response.status}`,err.response.data)
             })
-            // await sleep(15)
+            //await sleep(5)
             this.releaseTask(agentIp)
         }
         catch (e){
@@ -245,8 +246,9 @@ module.exports = {
      */
     postExecute:async function (post_data,post_params){
         let post_status = {success:false}
+        let agentIp = null
         try{
-            let agentIp = await this.occupyIdleAgent()
+            agentIp = await this.occupyIdleAgent()
 
             const config = {
                 headers:{
@@ -267,13 +269,14 @@ module.exports = {
                     post_status.describe = response.data.describe
                 }
             }).catch(err=>{
-                errLog("postCompile Axios",err.toString(),`statusCode: ${err.response.status}`,err.response.data)
+                errLog("postCompile Axios",err.toString())
             })
-            // await sleep(15)
+            //await sleep(5)
             this.releaseTask(agentIp)
         }
         catch (e){
             errLog("postCompile",e.toString())
+            this.releaseTask(agentIp)
         }
         return post_status
     },

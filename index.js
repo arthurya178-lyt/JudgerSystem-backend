@@ -10,7 +10,7 @@ app.use(express.urlencoded({extended:false}))
 
 
 const agent = require('./agent_manage.js')
-const {BACKEND_PORT, ACTIVE_CODE, ACCESS_CODE} = require("./ENV.agrs");
+const {BACKEND_PORT, ACTIVE_CODE, ACCESS_CODE, AGENT_MAX_VOLUME} = require("./ENV.agrs");
 const {debug, errLog} = require("./utilities");
 
 // 檢查連線是否有金鑰
@@ -37,7 +37,7 @@ app.post('/activate', async (req, res) =>
         let agent_ip = req.ip.split(":")[3]
         if(req.body.active_code === ACTIVE_CODE){
             const token = util.generateRandomStr()
-            agent.addAgent(agent_ip,token)
+            agent.addAgent(agent_ip,token,AGENT_MAX_VOLUME)
             debug(`[Active Agent] Active success | ip ${agent_ip} | Token: ${token}`)
             response.success = true
             response.token = token
