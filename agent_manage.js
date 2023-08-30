@@ -1,9 +1,6 @@
 const {sleep, debug, errLog, bugShow} = require("./utilities");
 const axios = require('axios')
 const qs = require('qs')
-const {AGENT_PORT, ACTIVE_CODE, AXIOS_TIMEOUT, AGENT_DEAD_TIME} = require("./ENV.agrs");
-const {response} = require("express");
-const {post} = require("axios");
 const dayjs = require("dayjs");
 
 let agent_list = {}
@@ -11,7 +8,7 @@ let agent_list = {}
 let task_volume = 0
 let in_progress_task = 0
 
-axios.defaults.timeout = AXIOS_TIMEOUT * 1000
+axios.defaults.timeout = process.env.AXIOS_FAILED_TIMEOUT * 1000
 
 module.exports = {
     addAgent : function (agent_ip,token,allow_task = 10){
@@ -83,7 +80,7 @@ module.exports = {
     checkAgentLife:function (ip){
         let serverState = false
         if(agent_list[ip]){
-            let deadTime = dayjs(new Date(agent_list[ip].alive_time)).add(AGENT_DEAD_TIME,"s")
+            let deadTime = dayjs(new Date(agent_list[ip].alive_time)).add(process.env.AGENT_DEAD_TIME,"s")
             let nowTime = dayjs(new Date())
             serverState = deadTime.isAfter(nowTime)
             debug(`[check Agent Life] Agent ${ip} status is ${serverState?"Alive":"Dead"}`)
@@ -98,27 +95,27 @@ module.exports = {
         if(agent_list[ip]){
             const nowUTCTime = new Date().getTime()
             agent_list[ip].alive_time = nowUTCTime
-            debug(`[valid Agent Server] Agent ${ip} life_time renew `)
+            debug(`[Valid Agent Server] Agent ${ip} life_time renew `)
             renewState = true
         }
         else{
-            debug(`[valid Agent Server] Cannot use ${ip} find the agent in agent_list`)
+            debug(`[Valid Agent Server] Cannot use ${ip} find the agent in agent_list`)
         }
         return renewState
     },
     validationAgent:async function (ip){
         let agentLife = this.checkAgentLife(ip)
         if(!agentLife){
-            debug(`[valid Agent Server] Agent ${ip} is dead, try to reset agent`)
+            debug(`[Valid Agent Server] Agent ${ip} is dead, try to reset agent`)
             let reset_status = await this.resetAgent(ip)
             // because agent reset setup is depending on internet speed, so here need a timer to pause function
             await sleep(3)
             if(reset_status){
-                debug(`[valid Agent Server] Agent ${ip} reset successfully`)
+                debug(`[Valid Agent Server] Agent ${ip} reset successfully`)
                 agentLife = this.checkAgentLife(ip)
             }
         }else{
-            debug(`[valid Agent Server] Agent ${ip} is valid`)
+            debug(`[Valid Agent Server] Agent ${ip} is valid`)
         }
         return agentLife
     },
@@ -128,9 +125,9 @@ module.exports = {
             debug(`[Reset Agent] Reset Calling found | ip: ${ip}`)
             const config2 = {
                 method: 'post',
-                baseURL: `http://${ip}:${AGENT_PORT}`,
+                baseURL: `http://${ip}:${process.env.AGENT_PORT}`,
                 url: "/reset",
-                data: qs.stringify({code:ACTIVE_CODE}),
+                data: qs.stringify({code:process.env.ACTIVE_KEY}),
                 timeout:3000,
             }
             await axios(config2).then(response=>{
@@ -162,8 +159,11 @@ module.exports = {
         }
         return reset_status
     },
-    list:function (){
+    state:function (){
         return {max_task_amount:task_volume,processing_task_amount:in_progress_task,agent_amount : agent_list.length,list : agent_list}
+    },
+    list:function (){
+        return agent_list
     },
     occupyIdleAgent:async function (task_quantity = 1){
         while (true){
@@ -211,7 +211,7 @@ module.exports = {
                     token:agent_list[agentIp].token,
                 },
                 method: 'post',
-                baseURL: `http://${agentIp}:${AGENT_PORT}`,
+                baseURL: `http://${agentIp}:${process.env.AGENT_PORT}`,
                 url: "/judge",
                 data : post_data,
                 params : post_params
@@ -255,7 +255,7 @@ module.exports = {
                     token:agent_list[agentIp].token,
                 },
                 method: 'post',
-                baseURL: `http://${agentIp}:${AGENT_PORT}`,
+                baseURL: `http://${agentIp}:${process.env.AGENT_PORT}`,
                 url: "/execute",
                 data : post_data,
                 params : post_params

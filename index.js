@@ -1,8 +1,9 @@
 const express = require('express')
 const os = require('os')
+const dotenv = require("dotenv")
 const util = require('./utilities.js')
 const app = express()
-
+dotenv.config()
 
 app.use(express.json())
 app.use(express.urlencoded({extended:false}))
@@ -10,12 +11,12 @@ app.use(express.urlencoded({extended:false}))
 
 
 const agent = require('./agent_manage.js')
-const {BACKEND_PORT, ACTIVE_CODE, ACCESS_CODE, AGENT_MAX_VOLUME} = require("./ENV.agrs");
 const {debug, errLog} = require("./utilities");
+const axios = require("axios");
 
 // 檢查連線是否有金鑰
 const connAccess = function (req,res,next){
-    if(req.headers.access_code === ACCESS_CODE ){
+    if(req.headers.access_code === process.env.API_AUTH_KEY ){
         next()
     }
     else{
@@ -35,9 +36,9 @@ app.post('/activate', async (req, res) =>
     let response = {success:false}
     try{
         let agent_ip = req.ip.split(":")[3]
-        if(req.body.active_code === ACTIVE_CODE){
+        if(req.body.active_code === process.env.ACTIVE_KEY){
             const token = util.generateRandomStr()
-            agent.addAgent(agent_ip,token,AGENT_MAX_VOLUME)
+            agent.addAgent(agent_ip,token,process.env.AGENT_VOLUME)
             debug(`[Active Agent] Active success | ip ${agent_ip} | Token: ${token}`)
             response.success = true
             response.token = token
@@ -150,7 +151,7 @@ app.post("/reset",async (req,res)=>{
     let reset_status = {status:"failed"}
     try{
         let agent_ip = req.ip.split(":")[3]
-        if(req.body.code === ACTIVE_CODE){
+        if(req.body.code === process.env.ACTIVE_KEY){
             if(agent.resetAllAgent()){
                 debug(`[Reset Backend] Reset success`)
                 reset_status.status = "success"
@@ -169,9 +170,32 @@ app.post("/reset",async (req,res)=>{
     res.json(reset_status)
 })
 
-app.post('/list/agent',async (req,res)=>{
+app.post('/state',async (req,res)=>{
+    res.json({data:agent.state()})
+})
+
+app.post("/list",(req,res)=>{
     res.json({data:agent.list()})
 })
+
+app.post('/support',async (req,res)=>{
+    let support_list = {}
+    try{
+        await Promise.all(Object.keys(agent.list()).map(async mapIp=>{
+            await axios.post(`http://${mapIp}:${process.env.AGENT_PORT}/support`).then(response=>{
+                support_list[mapIp] = response.data
+            }).catch(e=>{
+                console.error("Agent Not Support This function !!" , e.toString())
+            })
+        }))
+    }
+    catch (e){
+        console.error("Support api something wrong !!",e.toString())
+    }
+
+    res.json({data:support_list})
+})
+
 
 app.post('/verify',async (req,res)=>{
     let response = {verify:false}
@@ -189,7 +213,7 @@ app.post('/verify',async (req,res)=>{
 })
 
 
-app.listen(BACKEND_PORT, () =>
+app.listen(process.env.BACKEND_PORT, () =>
 {
     const ipDetails = os.networkInterfaces()
     const ipKey = Object.keys(ipDetails)
@@ -203,5 +227,5 @@ app.listen(BACKEND_PORT, () =>
             }
         })
     })
-    console.log(`[Backend] server start at PORT:${BACKEND_PORT} successfully `)
+    console.log(`[Backend] server start at PORT:${process.env.BACKEND_PORT} successfully `)
 })
